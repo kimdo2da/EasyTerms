@@ -54,6 +54,12 @@ public class Document {
         this.content = content;
     }
 
+    // 업로드된 파일 정보 등록
+    public void markAsFile(String filename) {
+        this.inputType = "FILE";
+        this.originalFilename = filename;
+    }
+
     @PrePersist
     public void prePersist() {
         createdAt = LocalDateTime.now();

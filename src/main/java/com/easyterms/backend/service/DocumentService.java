@@ -32,12 +32,6 @@ public class DocumentService {
         this.userRepository = userRepository;
     }
 
-    // 업로드된 파일 정보 등록
-    public void markAsFile(String filename) {
-        this.inputType = "FILE";
-        this.originalFilename = filename;
-    }
-
     // 문서 등록
     @Transactional
     public Document create(Long userId, String title,
@@ -64,6 +58,7 @@ public class DocumentService {
     // 사용자별 문서 목록 조회
     @Transactional(readOnly = true)
     public List<Document> findAll(Long userId) {
+
         if (!userRepository.existsById(userId)) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, "사용자가 존재하지 않습니다.");
@@ -76,6 +71,7 @@ public class DocumentService {
     // 문서 상세 조회
     @Transactional(readOnly = true)
     public Document findOne(Long id, Long userId) {
+
         return documentRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "문서를 찾을 수 없습니다."));
@@ -88,7 +84,7 @@ public class DocumentService {
         documentRepository.delete(document);
     }
 
-    // 파일로 등록한 문서 저장
+    // PDF/TXT 파일로 등록한 문서 저장
     @Transactional
     public Document createFile(
             Long userId,
