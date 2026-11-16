@@ -32,6 +32,12 @@ public class DocumentService {
         this.userRepository = userRepository;
     }
 
+    // 업로드된 파일 정보 등록
+    public void markAsFile(String filename) {
+        this.inputType = "FILE";
+        this.originalFilename = filename;
+    }
+
     // 문서 등록
     @Transactional
     public Document create(Long userId, String title,
@@ -80,5 +86,22 @@ public class DocumentService {
     public void delete(Long id, Long userId) {
         Document document = findOne(id, userId);
         documentRepository.delete(document);
+    }
+
+    // 파일로 등록한 문서 저장
+    @Transactional
+    public Document createFile(
+            Long userId,
+            String title,
+            String documentType,
+            String content,
+            String filename
+    ) {
+        Document document = create(
+                userId, title, documentType, content);
+
+        document.markAsFile(filename);
+
+        return document;
     }
 }
