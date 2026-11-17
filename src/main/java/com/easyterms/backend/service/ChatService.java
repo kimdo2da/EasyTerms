@@ -42,7 +42,7 @@ public class ChatService {
 
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
-        factory.setReadTimeout(90000);
+        factory.setReadTimeout(60000);
 
         this.restClient = RestClient.builder()
                 .baseUrl("https://generativelanguage.googleapis.com")
@@ -60,16 +60,19 @@ public class ChatService {
                 || question.length() > 500) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "질문은 1~500자로 입력해주세요.");
+                    "질문은 1~500자로 입력해주세요."
+            );
         }
 
-        if (document.getContent().length() > 50000) {
+        if (document.getContent() == null
+                || document.getContent().length() > 50000) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "질문에 사용할 문서가 너무 깁니다.");
+                    "질문에 사용할 문서가 없거나 너무 깁니다."
+            );
         }
 
-        // 최근 대화 10개 가져오기
+        // 최근 대화 10개 조회
         List<Map<String, Object>> history = jdbc.queryForList("""
                 SELECT role, content
                 FROM (
@@ -82,6 +85,7 @@ public class ChatService {
                 ORDER BY id ASC
                 """, documentId);
 
+        // Gemini 프롬프트 작성
         StringBuilder prompt = new StringBuilder();
 
         prompt.append("""
@@ -115,11 +119,17 @@ public class ChatService {
         prompt.append("\n[현재 질문]\n");
         prompt.append(question);
 
+        // Gemini 요청 데이터
         Map<String, Object> request = Map.of(
                 "contents", List.of(
-                        Map.of("parts", List.of(
-                                Map.of("text", prompt.toString())
-                        ))
+                        Map.of(
+                                "parts", List.of(
+                                        Map.of(
+                                                "text",
+                                                prompt.toString()
+                                        )
+                                )
+                        )
                 ),
                 "generationConfig", Map.of(
                         "temperature", 0.2,
@@ -130,24 +140,23 @@ public class ChatService {
         String answer;
 
         try {
-            Map<?, ?> response = restClient.post()
-                    .uri("/v1beta/models/{model}:generateContent", model)
-                    .header("x-goog-api-key", apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(Map.class);
+            Map<?, ?> response = requestGemini(request);
 
-            if (response == null ||
-                    !(response.get("candidates") instanceof List<?> candidates) ||
-                    candidates.isEmpty() ||
-                    !(candidates.get(0) instanceof Map<?, ?> candidate) ||
-                    !(candidate.get("content") instanceof Map<?, ?> content) ||
-                    !(content.get("parts") instanceof List<?> parts)) {
+            if (response == null
+                    || !(response.get("candidates")
+                    instanceof List<?> candidates)
+                    || candidates.isEmpty()
+                    || !(candidates.get(0)
+                    instanceof Map<?, ?> candidate)
+                    || !(candidate.get("content")
+                    instanceof Map<?, ?> content)
+                    || !(content.get("parts")
+                    instanceof List<?> parts)) {
 
                 throw new ResponseStatusException(
                         HttpStatus.BAD_GATEWAY,
-                        "AI 답변을 받지 못했습니다.");
+                        "AI 답변을 받지 못했습니다."
+                );
             }
 
             StringBuilder result = new StringBuilder();
@@ -165,36 +174,71 @@ public class ChatService {
             if (answer.isBlank()) {
                 throw new ResponseStatusException(
                         HttpStatus.BAD_GATEWAY,
-                        "AI 답변이 비어 있습니다.");
+                        "AI 답변이 비어 있습니다."
+                );
             }
 
         } catch (RestClientResponseException e) {
+
+            // Gemini HTTP 오류 확인
+            System.err.println(
+                    "Gemini API HTTP 오류: "
+                            + e.getStatusCode().value()
+            );
+
+            System.err.println(
+                    "Gemini 응답 내용: "
+                            + e.getResponseBodyAsString()
+            );
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Gemini API 오류: HTTP " +
-                            e.getStatusCode().value());
+                    "Gemini API 오류: HTTP "
+                            + e.getStatusCode().value(),
+                    e
+            );
 
         } catch (RestClientException e) {
+
+            // Gemini 네트워크 오류 확인
+            System.err.println(
+                    "Gemini 통신 오류: " + e.getMessage()
+            );
+
+            if (e.getCause() != null) {
+                System.err.println(
+                        "실제 원인: "
+                                + e.getCause().getMessage()
+                );
+            }
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Gemini 연결에 실패했습니다.");
+                    "Gemini 연결에 실패했습니다.",
+                    e
+            );
         }
 
-        // 질문과 답변을 한 번에 DB 저장
+        // AI 응답 성공 시에만 질문과 답변을 DB에 저장
         String finalAnswer = answer;
 
         transaction.executeWithoutResult(status -> {
+
             jdbc.update("""
                     INSERT INTO chat_messages
                         (document_id, role, content)
                     VALUES (?, 'USER', ?)
-                    """, documentId, question);
+                    """,
+                    documentId, question
+            );
 
             jdbc.update("""
                     INSERT INTO chat_messages
                         (document_id, role, content)
                     VALUES (?, 'ASSISTANT', ?)
-                    """, documentId, finalAnswer);
+                    """,
+                    documentId, finalAnswer
+            );
         });
 
         return Map.of(
@@ -204,7 +248,7 @@ public class ChatService {
         );
     }
 
-    // 문서의 대화 기록 조회
+    // 이전 대화 조회
     public List<Map<String, Object>> getHistory(
             Long documentId, Long userId) {
 
@@ -227,5 +271,56 @@ public class ChatService {
                 ),
                 documentId
         );
+    }
+
+    // Gemini 호출 (503일 때 최대 2회 추가 재시도)
+    private Map<?, ?> requestGemini(
+            Map<String, Object> request) {
+
+        for (int attempt = 1; attempt <= 3; attempt++) {
+
+            try {
+                return restClient.post()
+                        .uri(
+                                "/v1beta/models/{model}:generateContent",
+                                model
+                        )
+                        .header("x-goog-api-key", apiKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(request)
+                        .retrieve()
+                        .body(Map.class);
+
+            } catch (RestClientResponseException e) {
+
+                // 503이 아니거나 마지막 시도면 바로 오류 전달
+                if (e.getStatusCode().value() != 503
+                        || attempt == 3) {
+                    throw e;
+                }
+
+                System.out.println(
+                        "Gemini 503 발생. 재시도: " + attempt
+                );
+
+                try {
+                    Thread.sleep(
+                            attempt == 1 ? 1000 : 2000
+                    );
+
+                } catch (InterruptedException e2) {
+
+                    Thread.currentThread().interrupt();
+
+                    throw new ResponseStatusException(
+                            HttpStatus.SERVICE_UNAVAILABLE,
+                            "AI 요청이 중단되었습니다.",
+                            e2
+                    );
+                }
+            }
+        }
+
+        throw new IllegalStateException("Gemini 요청 실패");
     }
 }
