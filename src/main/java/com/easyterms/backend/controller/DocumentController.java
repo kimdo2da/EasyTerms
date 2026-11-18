@@ -3,6 +3,7 @@ package com.easyterms.backend.controller;
 
 import com.easyterms.backend.entity.Document;
 import com.easyterms.backend.service.DocumentService;
+import com.easyterms.backend.service.JwtService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -17,19 +18,31 @@ import java.util.List;
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final JwtService jwtService;
 
-    public DocumentController(DocumentService documentService) {
+    public DocumentController(
+            DocumentService documentService,
+            JwtService jwtService
+    ) {
         this.documentService = documentService;
+        this.jwtService = jwtService;
     }
 
     // 문서 등록
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public DocumentResponse create(
-            @Valid @RequestBody DocumentRequest request) {
+            @RequestHeader(value = "Authorization", required = false)
+            String authorization,
+            @Valid @RequestBody DocumentRequest request
+    ) {
+        Long userId = jwtService.getAuthorizedUserId(
+                authorization,
+                request.userId()
+        );
 
         Document saved = documentService.create(
-                request.userId(),
+                userId,
                 request.title(),
                 request.documentType(),
                 request.content()
@@ -38,39 +51,53 @@ public class DocumentController {
         return DocumentResponse.from(saved);
     }
 
-    // 문서 목록
+    // 내 문서 목록 조회
     @GetMapping
     public List<DocumentResponse> findAll(
-            @RequestParam Long userId) {
+            @RequestHeader(value = "Authorization", required = false)
+            String authorization,
+            @RequestParam Long userId
+    ) {
+        Long verifiedUserId =
+                jwtService.getAuthorizedUserId(authorization, userId);
 
-        return documentService.findAll(userId)
+        return documentService.findAll(verifiedUserId)
                 .stream()
                 .map(DocumentResponse::from)
                 .toList();
     }
 
-    // 문서 상세
+    // 내 문서 상세 조회
     @GetMapping("/{id}")
     public DocumentResponse findOne(
+            @RequestHeader(value = "Authorization", required = false)
+            String authorization,
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam Long userId
+    ) {
+        Long verifiedUserId =
+                jwtService.getAuthorizedUserId(authorization, userId);
 
         return DocumentResponse.from(
-                documentService.findOne(id, userId)
+                documentService.findOne(id, verifiedUserId)
         );
     }
 
-    // 문서 삭제
+    // 내 문서 삭제
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(
+            @RequestHeader(value = "Authorization", required = false)
+            String authorization,
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam Long userId
+    ) {
+        Long verifiedUserId =
+                jwtService.getAuthorizedUserId(authorization, userId);
 
-        documentService.delete(id, userId);
+        documentService.delete(id, verifiedUserId);
     }
 
-    // 요청 데이터
     public record DocumentRequest(
             @NotNull Long userId,
             @NotBlank String title,
@@ -78,7 +105,6 @@ public class DocumentController {
             @NotBlank String content
     ) {}
 
-    // 응답 데이터
     public record DocumentResponse(
             Long id,
             Long userId,
