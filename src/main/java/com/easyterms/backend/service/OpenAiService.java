@@ -78,7 +78,7 @@ public class OpenAiService {
         request.put("input", input);
         request.put("reasoning", Map.of("effort", "low"));
         request.put("store", false);
-        request.put("max_output_tokens", structuredJson ? 2500 : 1200);
+        request.put("max_output_tokens", structuredJson ? 8000 : 1500);
 
         if (structuredJson) {
             request.put("text", Map.of(
