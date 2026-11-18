@@ -102,6 +102,19 @@ public class OpenAiService {
                     .body(Map.class);
 
             if (response == null || !"completed".equals(response.get("status"))) {
+
+                System.err.println("===== OpenAI 응답 진단 =====");
+
+                if (response == null) {
+                    System.err.println("응답 자체가 null입니다.");
+                } else {
+                    System.err.println("응답 상태: " + response.get("status"));
+                    System.err.println("미완료 원인: " + response.get("incomplete_details"));
+                    System.err.println("토큰 사용량: " + response.get("usage"));
+                }
+
+                System.err.println("===========================");
+
                 throw new ResponseStatusException(
                         HttpStatus.BAD_GATEWAY,
                         "AI 응답이 완료되지 않았습니다."
